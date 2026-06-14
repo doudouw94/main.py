@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 import asyncio
 
 intents = discord.Intents.default()
@@ -101,6 +101,32 @@ class PresenceView(discord.ui.View):
     async def late(self, interaction: discord.Interaction, button):
         await self.register(interaction, "late")
 
+    # ==================== BOUTON RAPPEL ====================
+    @discord.ui.button(label="📢 Rappel Inactifs", style=discord.ButtonStyle.red, row=1)
+    async def rappel(self, interaction: discord.Interaction, button):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
+
+        today = date.today()
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute("SELECT DISTINCT user_id FROM presences WHERE operation_date = %s", (today,))
+                active = {row[0] for row in c.fetchall()}
+                c.execute("SELECT user_id FROM authorized_users")
+                all_users = [row[0] for row in c.fetchall()]
+
+        reminded = 0
+        for user_id in all_users:
+            if user_id not in active:
+                member = interaction.guild.get_member(user_id)
+                if member:
+                    try:
+                        await member.send(f"⚠️ **Rappel Présence Opérations 21h**\nTu n'as pas encore marqué ta présence pour aujourd'hui ({today.strftime('%d/%m')}).")
+                        reminded += 1
+                    except:
+                        pass
+        await interaction.response.send_message(f"✅ Rappel envoyé à **{reminded}** membre(s).", ephemeral=True)
+
 # ==================== TABLEAU ====================
 async def update_presence_tableau():
     if not PRESENCE_MESSAGE_ID or not TABLEAU_CHANNEL_ID:
@@ -140,14 +166,6 @@ async def update_presence_tableau():
     except Exception as e:
         print(f"Erreur tableau: {e}")
 
-# ==================== AUTO RESET À MINUIT ====================
-@tasks.loop(hours=1)
-async def auto_reset():
-    now = datetime.now()
-    if now.hour == 0 and now.minute < 5:  # Entre 00:00 et 00:05
-        await update_presence_tableau()
-        print("🔄 Tableau réinitialisé pour le nouveau jour.")
-
 # ==================== COMMANDES ====================
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -166,48 +184,9 @@ async def setpresence(ctx):
     PRESENCE_MESSAGE_ID = msg.id
     await ctx.send("✅ **Tableau créé !**")
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def rappel(ctx):
-    """Rappel aux personnes qui n'ont pas marqué leur présence"""
-    today = date.today()
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("SELECT DISTINCT user_id FROM presences WHERE operation_date = %s", (today,))
-            active = {row[0] for row in c.fetchall()}
-            c.execute("SELECT user_id, username FROM authorized_users")
-            all_users = c.fetchall()
-
-    reminded = 0
-    for user_id, username in all_users:
-        if user_id not in active:
-            member = ctx.guild.get_member(user_id)
-            if member:
-                try:
-                    await member.send(f"⚠️ **Rappel Présence**\nTu n'as pas encore marqué ta présence pour ce soir ({today.strftime('%d/%m')}).")
-                    reminded += 1
-                except:
-                    pass
-    await ctx.send(f"✅ Rappel envoyé à **{reminded}** personne(s).")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def adduser(ctx, member: discord.Member):
-    try:
-        with get_db() as conn:
-            with conn.cursor() as c:
-                c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING", 
-                         (member.id, member.display_name))
-                conn.commit()
-        await ctx.send(f"✅ **{member.display_name}** ajouté.")
-    except:
-        await ctx.send("❌ Erreur.")
-
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
-    if not auto_reset.is_running():
-        auto_reset.start()
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
