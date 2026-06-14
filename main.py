@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import psycopg2
 import os
 from datetime import date, datetime
+import asyncio
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -80,12 +81,19 @@ class PresenceView(discord.ui.View):
                     """, (operation_date, interaction.user.id, interaction.user.display_name, status, note))
                     conn.commit()
 
-            await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
+            # Message éphémère qui s'efface après 3 secondes
+            msg = await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
+            await asyncio.sleep(3)
+            await msg.delete()
+
             await update_presence_tableau()
 
         except Exception as e:
             print(e)
-            await interaction.response.send_message("❌ Erreur.", ephemeral=True)
+            try:
+                await interaction.response.send_message("❌ Erreur.", ephemeral=True)
+            except:
+                pass
 
     @discord.ui.button(label="✅ Présent", style=discord.ButtonStyle.green)
     async def present(self, interaction: discord.Interaction, button):
@@ -118,37 +126,21 @@ async def update_presence_tableau():
 
         embed = discord.Embed(
             title="📋 Présences Opérations 21h",
-            description=f"**Date :** {today.strftime('%d/%m/%Y')}\n\u200b",
+            description=f"**Date :** {today.strftime('%d/%m/%Y')}",
             color=discord.Color.blurple()
         )
 
-        present = []
-        late = []
-        absent = []
-        unmarked = []
+        present = [f"✅ {u}" for u, (s, n) in data.items() if s == "present"]
+        late = [f"⏰ {u} {n or ''}" for u, (s, n) in data.items() if s == "late"]
+        absent = [f"❌ {u}" for u, (s, n) in data.items() if s == "absent"]
+        unmarked = [f"⚪ {u}" for u in all_users if u not in data]
 
-        for user in all_users:
-            if user in data:
-                status, note = data[user]
-                if status == "present":
-                    present.append(f"✅ {user}")
-                elif status == "late":
-                    late.append(f"⏰ {user} {note or ''}")
-                else:
-                    absent.append(f"❌ {user}")
-            else:
-                unmarked.append(f"⚪ {user}")
+        if present: embed.add_field(name=f"✅ Présents ({len(present)})", value="\n".join(present) or "Aucun", inline=False)
+        if late: embed.add_field(name=f"⏰ En Retard ({len(late)})", value="\n".join(late) or "Aucun", inline=False)
+        if absent: embed.add_field(name=f"❌ Absents ({len(absent)})", value="\n".join(absent) or "Aucun", inline=False)
+        if unmarked: embed.add_field(name=f"⚪ Non marqués ({len(unmarked)})", value="\n".join(unmarked), inline=False)
 
-        if present:
-            embed.add_field(name=f"✅ Présents ({len(present)})", value="\n".join(present), inline=False)
-        if late:
-            embed.add_field(name=f"⏰ En Retard ({len(late)})", value="\n".join(late), inline=False)
-        if absent:
-            embed.add_field(name=f"❌ Absents ({len(absent)})", value="\n".join(absent), inline=False)
-        if unmarked:
-            embed.add_field(name=f"⚪ Non marqués ({len(unmarked)})", value="\n".join(unmarked), inline=False)
-
-        embed.set_footer(text=f"Dernière mise à jour : {datetime.now().strftime('%H:%M:%S')}")
+        embed.set_footer(text=f"Dernière MAJ : {datetime.now().strftime('%H:%M:%S')}")
         await message.edit(embed=embed, view=PresenceView())
 
     except Exception as e:
@@ -161,12 +153,16 @@ async def setpresence(ctx):
     global TABLEAU_CHANNEL_ID, PRESENCE_MESSAGE_ID
     TABLEAU_CHANNEL_ID = ctx.channel.id
 
-    embed = discord.Embed(title="📋 Présences Opérations 21h", 
-                         description="Clique sur les boutons ci-dessous", 
-                         color=discord.Color.blurple())
+    today = date.today()
+    embed = discord.Embed(
+        title="📋 Présences Opérations 21h",
+        description=f"**Date :** {today.strftime('%d/%m/%Y')}\n\nClique sur les boutons ci-dessous",
+        color=discord.Color.blurple()
+    )
+    
     msg = await ctx.send(embed=embed, view=PresenceView())
     PRESENCE_MESSAGE_ID = msg.id
-    await ctx.send("✅ **Tableau créé !**")
+    await ctx.send("✅ **Tableau créé !** (les messages privés s'effacent automatiquement)")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -189,3 +185,5 @@ if __name__ == "__main__":
     token = os.getenv("TOKEN")
     if token:
         bot.run(token)
+    else:
+        print("❌ TOKEN manquant")
