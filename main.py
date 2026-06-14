@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import asyncio
 
 intents = discord.Intents.default()
@@ -81,10 +81,8 @@ class PresenceView(discord.ui.View):
                     """, (operation_date, interaction.user.id, interaction.user.display_name, status, note))
                     conn.commit()
 
-            # Message qui s'efface rapidement
             await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
             await asyncio.sleep(3)
-            # On met à jour le tableau
             await update_presence_tableau()
 
         except Exception as e:
@@ -142,6 +140,14 @@ async def update_presence_tableau():
     except Exception as e:
         print(f"Erreur tableau: {e}")
 
+# ==================== AUTO RESET À MINUIT ====================
+@tasks.loop(hours=1)
+async def auto_reset():
+    now = datetime.now()
+    if now.hour == 0 and now.minute < 5:  # Entre 00:00 et 00:05
+        await update_presence_tableau()
+        print("🔄 Tableau réinitialisé pour le nouveau jour.")
+
 # ==================== COMMANDES ====================
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -162,6 +168,30 @@ async def setpresence(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def rappel(ctx):
+    """Rappel aux personnes qui n'ont pas marqué leur présence"""
+    today = date.today()
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT DISTINCT user_id FROM presences WHERE operation_date = %s", (today,))
+            active = {row[0] for row in c.fetchall()}
+            c.execute("SELECT user_id, username FROM authorized_users")
+            all_users = c.fetchall()
+
+    reminded = 0
+    for user_id, username in all_users:
+        if user_id not in active:
+            member = ctx.guild.get_member(user_id)
+            if member:
+                try:
+                    await member.send(f"⚠️ **Rappel Présence**\nTu n'as pas encore marqué ta présence pour ce soir ({today.strftime('%d/%m')}).")
+                    reminded += 1
+                except:
+                    pass
+    await ctx.send(f"✅ Rappel envoyé à **{reminded}** personne(s).")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def adduser(ctx, member: discord.Member):
     try:
         with get_db() as conn:
@@ -176,6 +206,8 @@ async def adduser(ctx, member: discord.Member):
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
+    if not auto_reset.is_running():
+        auto_reset.start()
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
