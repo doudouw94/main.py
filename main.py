@@ -41,7 +41,7 @@ def migrate_database():
                     );
                 ''')
                 conn.commit()
-        print("✅ Base de données prête et tables créées avec succès !")
+        print("✅ Base de données prête !")
     except Exception as e:
         print(f"⚠️ Erreur DB : {e}")
 
@@ -52,8 +52,9 @@ class PresenceView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    async def register_presence(self, interaction: discord.Interaction, status: str):
+    async def register(self, interaction: discord.Interaction, status: str):
         try:
+            # Vérification autorisation
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
@@ -61,14 +62,7 @@ class PresenceView(discord.ui.View):
                         return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
 
             operation_date = date.today()
-            note = None
-            if status == "late":
-                await interaction.response.send_message("À combien de minutes de retard ?", ephemeral=True)
-                try:
-                    msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
-                    note = f"Retard de {msg.content} min"
-                except:
-                    note = "Retard non précisé"
+            note = "Retard non précisé" if status == "late" else None
 
             with get_db() as conn:
                 with conn.cursor() as c:
@@ -80,34 +74,30 @@ class PresenceView(discord.ui.View):
                     """, (operation_date, interaction.user.id, interaction.user.display_name, status, note))
                     conn.commit()
 
-            await interaction.followup.send(f"✅ Ta présence **{status.upper()}** a été enregistrée !", ephemeral=True)
-            await update_presence_tableau()
+            await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
+            # Mise à jour du tableau
+            # await update_presence_tableau()  # on peut le réactiver plus tard
 
         except Exception as e:
-            print(f"Erreur register: {e}")
+            print(f"Erreur: {e}")
             try:
                 await interaction.response.send_message("❌ Erreur lors de l'enregistrement.", ephemeral=True)
             except:
-                await interaction.followup.send("❌ Erreur lors de l'enregistrement.", ephemeral=True)
+                await interaction.followup.send("❌ Erreur.", ephemeral=True)
 
     @discord.ui.button(label="✅ Présent", style=discord.ButtonStyle.green)
     async def present(self, interaction: discord.Interaction, button):
-        await self.register_presence(interaction, "present")
+        await self.register(interaction, "present")
 
     @discord.ui.button(label="❌ Absent", style=discord.ButtonStyle.red)
     async def absent(self, interaction: discord.Interaction, button):
-        await self.register_presence(interaction, "absent")
+        await self.register(interaction, "absent")
 
     @discord.ui.button(label="⏰ En Retard", style=discord.ButtonStyle.gray)
     async def late(self, interaction: discord.Interaction, button):
-        await self.register_presence(interaction, "late")
+        await self.register(interaction, "late")
 
-# ==================== FONCTIONS & COMMANDES ====================
-async def update_presence_tableau():
-    if not PRESENCE_MESSAGE_ID: return
-    # (code simplifié pour l'instant)
-    pass
-
+# ==================== COMMANDES ====================
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setpresence(ctx):
@@ -115,11 +105,24 @@ async def setpresence(ctx):
     TABLEAU_CHANNEL_ID = ctx.channel.id
 
     embed = discord.Embed(title="📋 Tableau de Présence - Opérations 21h", 
-                         description="Clique sur les boutons ci-dessous", 
+                         description="Clique sur les boutons ci-dessous pour marquer ta présence", 
                          color=discord.Color.blurple())
     msg = await ctx.send(embed=embed, view=PresenceView())
     PRESENCE_MESSAGE_ID = msg.id
-    await ctx.send("✅ Tableau créé !")
+    await ctx.send("✅ **Tableau créé avec succès !**")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def adduser(ctx, member: discord.Member):
+    try:
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING", 
+                         (member.id, member.display_name))
+                conn.commit()
+        await ctx.send(f"✅ **{member.display_name}** ajouté.")
+    except:
+        await ctx.send("❌ Erreur.")
 
 @bot.event
 async def on_ready():
