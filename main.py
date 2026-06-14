@@ -81,19 +81,15 @@ class PresenceView(discord.ui.View):
                     """, (operation_date, interaction.user.id, interaction.user.display_name, status, note))
                     conn.commit()
 
-            # Message éphémère qui s'efface après 3 secondes
-            msg = await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
+            # Message qui s'efface rapidement
+            await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
             await asyncio.sleep(3)
-            await msg.delete()
-
+            # On met à jour le tableau
             await update_presence_tableau()
 
         except Exception as e:
             print(e)
-            try:
-                await interaction.response.send_message("❌ Erreur.", ephemeral=True)
-            except:
-                pass
+            await interaction.response.send_message("❌ Erreur.", ephemeral=True)
 
     @discord.ui.button(label="✅ Présent", style=discord.ButtonStyle.green)
     async def present(self, interaction: discord.Interaction, button):
@@ -162,7 +158,7 @@ async def setpresence(ctx):
     
     msg = await ctx.send(embed=embed, view=PresenceView())
     PRESENCE_MESSAGE_ID = msg.id
-    await ctx.send("✅ **Tableau créé !** (les messages privés s'effacent automatiquement)")
+    await ctx.send("✅ **Tableau créé !**")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
