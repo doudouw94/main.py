@@ -101,12 +101,11 @@ class PresenceView(discord.ui.View):
     async def late(self, interaction: discord.Interaction, button):
         await self.register(interaction, "late")
 
-    # ==================== BOUTON RAPPEL ====================
     @discord.ui.button(label="📢 Rappel Inactifs", style=discord.ButtonStyle.red, row=1)
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
-
+        
         today = date.today()
         with get_db() as conn:
             with conn.cursor() as c:
@@ -121,7 +120,7 @@ class PresenceView(discord.ui.View):
                 member = interaction.guild.get_member(user_id)
                 if member:
                     try:
-                        await member.send(f"⚠️ **Rappel Présence Opérations 21h**\nTu n'as pas encore marqué ta présence pour aujourd'hui ({today.strftime('%d/%m')}).")
+                        await member.send(f"⚠️ **Rappel Présence**\nTu n'as pas encore marqué ta présence pour **l'opération de ce soir 21h**.")
                         reminded += 1
                     except:
                         pass
@@ -134,19 +133,18 @@ async def update_presence_tableau():
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(PRESENCE_MESSAGE_ID)
-        today = date.today()
 
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("SELECT username FROM authorized_users ORDER BY username")
                 all_users = [row[0] for row in c.fetchall()]
 
-                c.execute("SELECT username, status, note FROM presences WHERE operation_date = %s", (today,))
+                c.execute("SELECT username, status, note FROM presences WHERE operation_date = %s", (date.today(),))
                 data = {row[0]: (row[1], row[2]) for row in c.fetchall()}
 
         embed = discord.Embed(
             title="📋 Présences Opérations 21h",
-            description=f"**Date :** {today.strftime('%d/%m/%Y')}",
+            description="**Opération de ce soir**",
             color=discord.Color.blurple()
         )
 
@@ -173,10 +171,9 @@ async def setpresence(ctx):
     global TABLEAU_CHANNEL_ID, PRESENCE_MESSAGE_ID
     TABLEAU_CHANNEL_ID = ctx.channel.id
 
-    today = date.today()
     embed = discord.Embed(
         title="📋 Présences Opérations 21h",
-        description=f"**Date :** {today.strftime('%d/%m/%Y')}\n\nClique sur les boutons ci-dessous",
+        description="**Opération de ce soir**",
         color=discord.Color.blurple()
     )
     
