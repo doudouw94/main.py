@@ -54,7 +54,6 @@ class PresenceView(discord.ui.View):
 
     async def register(self, interaction: discord.Interaction, status: str):
         try:
-            # Vérification autorisation
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
@@ -62,7 +61,14 @@ class PresenceView(discord.ui.View):
                         return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
 
             operation_date = date.today()
-            note = "Retard non précisé" if status == "late" else None
+            note = None
+            if status == "late":
+                await interaction.response.send_message("À combien de minutes de retard ?", ephemeral=True)
+                try:
+                    msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
+                    note = f"Retard de {msg.content} min"
+                except:
+                    note = "Retard non précisé"
 
             with get_db() as conn:
                 with conn.cursor() as c:
@@ -75,15 +81,11 @@ class PresenceView(discord.ui.View):
                     conn.commit()
 
             await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
-            # Mise à jour du tableau
-            # await update_presence_tableau()  # on peut le réactiver plus tard
+            await update_presence_tableau()
 
         except Exception as e:
-            print(f"Erreur: {e}")
-            try:
-                await interaction.response.send_message("❌ Erreur lors de l'enregistrement.", ephemeral=True)
-            except:
-                await interaction.followup.send("❌ Erreur.", ephemeral=True)
+            print(e)
+            await interaction.response.send_message("❌ Erreur.", ephemeral=True)
 
     @discord.ui.button(label="✅ Présent", style=discord.ButtonStyle.green)
     async def present(self, interaction: discord.Interaction, button):
@@ -97,6 +99,61 @@ class PresenceView(discord.ui.View):
     async def late(self, interaction: discord.Interaction, button):
         await self.register(interaction, "late")
 
+# ==================== TABLEAU ====================
+async def update_presence_tableau():
+    if not PRESENCE_MESSAGE_ID or not TABLEAU_CHANNEL_ID:
+        return
+    try:
+        channel = bot.get_channel(TABLEAU_CHANNEL_ID)
+        message = await channel.fetch_message(PRESENCE_MESSAGE_ID)
+        today = date.today()
+
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute("SELECT username FROM authorized_users ORDER BY username")
+                all_users = [row[0] for row in c.fetchall()]
+
+                c.execute("SELECT username, status, note FROM presences WHERE operation_date = %s", (today,))
+                data = {row[0]: (row[1], row[2]) for row in c.fetchall()}
+
+        embed = discord.Embed(
+            title="📋 Présences Opérations 21h",
+            description=f"**Date :** {today.strftime('%d/%m/%Y')}\n\u200b",
+            color=discord.Color.blurple()
+        )
+
+        present = []
+        late = []
+        absent = []
+        unmarked = []
+
+        for user in all_users:
+            if user in data:
+                status, note = data[user]
+                if status == "present":
+                    present.append(f"✅ {user}")
+                elif status == "late":
+                    late.append(f"⏰ {user} {note or ''}")
+                else:
+                    absent.append(f"❌ {user}")
+            else:
+                unmarked.append(f"⚪ {user}")
+
+        if present:
+            embed.add_field(name=f"✅ Présents ({len(present)})", value="\n".join(present), inline=False)
+        if late:
+            embed.add_field(name=f"⏰ En Retard ({len(late)})", value="\n".join(late), inline=False)
+        if absent:
+            embed.add_field(name=f"❌ Absents ({len(absent)})", value="\n".join(absent), inline=False)
+        if unmarked:
+            embed.add_field(name=f"⚪ Non marqués ({len(unmarked)})", value="\n".join(unmarked), inline=False)
+
+        embed.set_footer(text=f"Dernière mise à jour : {datetime.now().strftime('%H:%M:%S')}")
+        await message.edit(embed=embed, view=PresenceView())
+
+    except Exception as e:
+        print(f"Erreur tableau: {e}")
+
 # ==================== COMMANDES ====================
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -104,12 +161,12 @@ async def setpresence(ctx):
     global TABLEAU_CHANNEL_ID, PRESENCE_MESSAGE_ID
     TABLEAU_CHANNEL_ID = ctx.channel.id
 
-    embed = discord.Embed(title="📋 Tableau de Présence - Opérations 21h", 
-                         description="Clique sur les boutons ci-dessous pour marquer ta présence", 
+    embed = discord.Embed(title="📋 Présences Opérations 21h", 
+                         description="Clique sur les boutons ci-dessous", 
                          color=discord.Color.blurple())
     msg = await ctx.send(embed=embed, view=PresenceView())
     PRESENCE_MESSAGE_ID = msg.id
-    await ctx.send("✅ **Tableau créé avec succès !**")
+    await ctx.send("✅ **Tableau créé !**")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
