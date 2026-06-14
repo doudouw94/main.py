@@ -3,7 +3,6 @@ from discord.ext import commands, tasks
 import psycopg2
 import os
 from datetime import date, datetime
-import asyncio
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -12,7 +11,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="p!", intents=intents)
 
 # ==================== CONFIG ====================
-TABLEAU_CHANNEL_ID = 1515801550533034004
+TABLEAU_CHANNEL_ID = None
 PRESENCE_MESSAGE_ID = None
 
 # ==================== DATABASE ====================
@@ -23,17 +22,22 @@ def migrate_database():
     try:
         with get_db() as conn:
             with conn.cursor() as c:
+                # Recréation propre des tables
+                c.execute("DROP TABLE IF EXISTS presences;")
+                
                 c.execute('''
-                    CREATE TABLE IF NOT EXISTS presences (
+                    CREATE TABLE presences (
                         id SERIAL PRIMARY KEY,
                         operation_date DATE NOT NULL,
                         user_id BIGINT NOT NULL,
                         username TEXT,
                         status TEXT NOT NULL,
                         note TEXT,
-                        submitted_at TIMESTAMP DEFAULT NOW()
+                        submitted_at TIMESTAMP DEFAULT NOW(),
+                        UNIQUE(operation_date, user_id)
                     );
                 ''')
+                
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS authorized_users (
                         user_id BIGINT PRIMARY KEY,
@@ -41,14 +45,13 @@ def migrate_database():
                     );
                 ''')
                 conn.commit()
-        print("✅ Base de données Présences prête !")
+        print("✅ Base de données prête et tables créées avec succès !")
     except Exception as e:
-        print(f"⚠️ Impossible de se connecter à la DB pour le moment: {e}")
-        print("Le bot va continuer sans migration...")
+        print(f"⚠️ Erreur DB (le bot continue) : {e}")
 
 migrate_database()
 
-# ==================== VIEWS & AUTRES FONCTIONS (le reste reste identique) ====================
+# ==================== VIEWS ====================
 class PresenceView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -69,11 +72,11 @@ class PresenceView(discord.ui.View):
         try:
             with get_db() as conn:
                 with conn.cursor() as c:
+                    # Vérification autorisation
                     c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
                     if not c.fetchone():
                         return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
 
-            # ... (le reste du code register_presence reste le même)
             operation_date = date.today()
             note = None
             if status == "late":
@@ -97,12 +100,13 @@ class PresenceView(discord.ui.View):
             await interaction.followup.send(f"✅ Ta présence **{status.upper()}** a été enregistrée !", ephemeral=True)
             await update_presence_tableau()
         except Exception as e:
-            await interaction.response.send_message("❌ Erreur de base de données.", ephemeral=True)
+            await interaction.response.send_message("❌ Erreur lors de l'enregistrement.", ephemeral=True)
             print(e)
 
-# ==================== Le reste du code (update, commandes, on_ready) ====================
+# ==================== FONCTIONS ====================
 async def update_presence_tableau():
-    if not PRESENCE_MESSAGE_ID: return
+    if not PRESENCE_MESSAGE_ID or not TABLEAU_CHANNEL_ID:
+        return
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(PRESENCE_MESSAGE_ID)
@@ -120,19 +124,14 @@ async def update_presence_tableau():
                             description=f"**Date :** {today.strftime('%d/%m/%Y')}", 
                             color=discord.Color.blurple())
 
-        present, late, absent, unmarked = [], [], [], []
-        for user in all_users:
-            if user in data:
-                status, note = data[user]
-                if status == "present": present.append(f"✅ {user}")
-                elif status == "late": late.append(f"⏰ {user} {note or ''}")
-                else: absent.append(f"❌ {user}")
-            else:
-                unmarked.append(f"⚪ {user}")
+        present = [f"✅ {u}" for u in all_users if data.get(u, (None,None))[0] == "present"]
+        late = [f"⏰ {u} {data.get(u, (None,None))[1] or ''}" for u in all_users if data.get(u, (None,None))[0] == "late"]
+        absent = [f"❌ {u}" for u in all_users if data.get(u, (None,None))[0] == "absent"]
+        unmarked = [f"⚪ {u}" for u in all_users if u not in data]
 
-        if present: embed.add_field(name=f"✅ Présents ({len(present)})", value="\n".join(present), inline=False)
-        if late: embed.add_field(name=f"⏰ En Retard ({len(late)})", value="\n".join(late), inline=False)
-        if absent: embed.add_field(name=f"❌ Absents ({len(absent)})", value="\n".join(absent), inline=False)
+        if present: embed.add_field(name=f"✅ Présents ({len(present)})", value="\n".join(present) or "Aucun", inline=False)
+        if late: embed.add_field(name=f"⏰ En Retard ({len(late)})", value="\n".join(late) or "Aucun", inline=False)
+        if absent: embed.add_field(name=f"❌ Absents ({len(absent)})", value="\n".join(absent) or "Aucun", inline=False)
         if unmarked: embed.add_field(name=f"⚪ Non marqués ({len(unmarked)})", value="\n".join(unmarked), inline=False)
 
         embed.set_footer(text=f"Dernière MAJ : {datetime.now().strftime('%H:%M')}")
@@ -144,15 +143,19 @@ async def update_presence_tableau():
 async def auto_update():
     await update_presence_tableau()
 
+# ==================== COMMANDES ====================
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setpresence(ctx):
     global TABLEAU_CHANNEL_ID, PRESENCE_MESSAGE_ID
     TABLEAU_CHANNEL_ID = ctx.channel.id
-    embed = discord.Embed(title="📋 Présences Opérations 21h", description="Clique sur les boutons pour marquer ta présence", color=discord.Color.blurple())
+
+    embed = discord.Embed(title="📋 Tableau de Présence - Opérations 21h", 
+                         description="Clique sur les boutons ci-dessous", 
+                         color=discord.Color.blurple())
     msg = await ctx.send(embed=embed, view=PresenceView())
     PRESENCE_MESSAGE_ID = msg.id
-    await ctx.send("✅ Tableau créé !")
+    await ctx.send("✅ **Tableau de présence créé !**")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -163,9 +166,20 @@ async def adduser(ctx, member: discord.Member):
                 c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING", 
                          (member.id, member.display_name))
                 conn.commit()
-        await ctx.send(f"✅ {member.display_name} ajouté.")
+        await ctx.send(f"✅ **{member.display_name}** ajouté aux présences.")
     except:
-        await ctx.send("❌ Erreur DB")
+        await ctx.send("❌ Erreur lors de l'ajout.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def resetpresence(ctx):
+    today = date.today()
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM presences WHERE operation_date = %s", (today,))
+            conn.commit()
+    await ctx.send("✅ Présences du jour réinitialisées.")
+    await update_presence_tableau()
 
 @bot.event
 async def on_ready():
