@@ -1,6 +1,5 @@
-Voici le code complet corrigé :
-Pythonimport discord
-from discord.ext import commands, tasks
+import discord
+from discord.ext import commands
 import psycopg2
 import os
 from datetime import date, datetime
@@ -237,7 +236,6 @@ async def reset(ctx):
     await ctx.send("🗑️ Présences du jour réinitialisées.")
     await update_presence_tableau()
 
-# Commande d'aide (renommée pour éviter le conflit avec la commande par défaut)
 @bot.command(name="aide", aliases=["help", "commands"])
 async def aide(ctx):
     embed = discord.Embed(title="📜 Commandes du Bot Présence", color=discord.Color.blurple())
