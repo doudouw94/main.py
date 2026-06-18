@@ -55,6 +55,7 @@ class PresenceView(discord.ui.View):
 
     async def register(self, interaction: discord.Interaction, status: str):
         try:
+            # Vérification autorisation
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
@@ -63,6 +64,8 @@ class PresenceView(discord.ui.View):
 
             operation_date = date.today()
             note = None
+
+            # Cas spécial "En Retard"
             if status == "late":
                 await interaction.response.send_message("À combien de minutes de retard ?", ephemeral=True)
                 try:
@@ -70,7 +73,11 @@ class PresenceView(discord.ui.View):
                     note = f"Retard de {msg.content} min"
                 except asyncio.TimeoutError:
                     note = "Retard non précisé"
+            else:
+                # Pour Present et Absent → réponse immédiate
+                await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
 
+            # Enregistrement en base
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("""
@@ -81,12 +88,21 @@ class PresenceView(discord.ui.View):
                     """, (operation_date, interaction.user.id, interaction.user.display_name, status, note))
                     conn.commit()
 
-            await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
-            await asyncio.sleep(3)
+            # Mise à jour du tableau
+            await asyncio.sleep(2)
             await update_presence_tableau()
+
+            # Message de confirmation si ce n'était pas déjà envoyé (cas late)
+            if status == "late":
+                await interaction.followup.send(f"✅ **EN RETARD** enregistré !", ephemeral=True)
+
         except Exception as e:
             print(e)
-            await interaction.response.send_message("❌ Erreur.", ephemeral=True)
+            # Sécurité : si l'interaction n'a pas encore eu de réponse
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ Erreur lors de l'enregistrement.", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Erreur lors de l'enregistrement.", ephemeral=True)
 
     @discord.ui.button(label="✅ Présent", style=discord.ButtonStyle.green)
     async def present(self, interaction: discord.Interaction, button):
@@ -105,7 +121,6 @@ class PresenceView(discord.ui.View):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
 
-        # IMPORTANT : On defer l'interaction car ça peut prendre du temps
         await interaction.response.defer(ephemeral=True)
 
         today = date.today()
@@ -125,7 +140,7 @@ class PresenceView(discord.ui.View):
                         try:
                             await member.send(f"⚠️ **Rappel Présence**\nTu n'as pas encore marqué ta présence pour **l'opération de ce soir 21h**.")
                             reminded += 1
-                            await asyncio.sleep(0.5)  # Petite pause pour éviter le rate limit
+                            await asyncio.sleep(0.5)
                         except:
                             pass
 
