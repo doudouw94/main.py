@@ -1,4 +1,5 @@
-import discord
+Voici le code complet corrigé :
+Pythonimport discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
@@ -236,11 +237,14 @@ async def reset(ctx):
     await ctx.send("🗑️ Présences du jour réinitialisées.")
     await update_presence_tableau()
 
-@bot.command()
-async def help(ctx):
+# Commande d'aide (renommée pour éviter le conflit avec la commande par défaut)
+@bot.command(name="aide", aliases=["help", "commands"])
+async def aide(ctx):
     embed = discord.Embed(title="📜 Commandes du Bot Présence", color=discord.Color.blurple())
-    embed.add_field(name="**Commandes Générales**", value="`p!help`\n`p!listusers`\n`p!stats`", inline=False)
-    embed.add_field(name="**Commandes Admin**", value="`p!setpresence`\n`p!adduser @user`\n`p!removeuser @user`\n`p!reset`", inline=False)
+    embed.add_field(name="**Commandes Générales**", 
+                    value="`p!aide` ou `p!help`\n`p!listusers`\n`p!stats`", inline=False)
+    embed.add_field(name="**Commandes Admin**", 
+                    value="`p!setpresence`\n`p!adduser @user`\n`p!removeuser @user`\n`p!reset`", inline=False)
     await ctx.send(embed=embed)
 
 @bot.event
