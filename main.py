@@ -104,26 +104,35 @@ class PresenceView(discord.ui.View):
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
-       
-        today = date.today()
-        with get_db() as conn:
-            with conn.cursor() as c:
-                c.execute("SELECT DISTINCT user_id FROM presences WHERE operation_date = %s", (today,))
-                active = {row[0] for row in c.fetchall()}
-                c.execute("SELECT user_id FROM authorized_users")
-                all_users = [row[0] for row in c.fetchall()]
 
+        # IMPORTANT : On defer l'interaction car ça peut prendre du temps
+        await interaction.response.defer(ephemeral=True)
+
+        today = date.today()
         reminded = 0
-        for user_id in all_users:
-            if user_id not in active:
-                member = interaction.guild.get_member(user_id)
-                if member:
-                    try:
-                        await member.send(f"⚠️ **Rappel Présence**\nTu n'as pas encore marqué ta présence pour **l'opération de ce soir 21h**.")
-                        reminded += 1
-                    except:
-                        pass
-        await interaction.response.send_message(f"✅ Rappel envoyé à **{reminded}** membre(s).", ephemeral=True)
+        try:
+            with get_db() as conn:
+                with conn.cursor() as c:
+                    c.execute("SELECT DISTINCT user_id FROM presences WHERE operation_date = %s", (today,))
+                    active = {row[0] for row in c.fetchall()}
+                    c.execute("SELECT user_id FROM authorized_users")
+                    all_users = [row[0] for row in c.fetchall()]
+
+            for user_id in all_users:
+                if user_id not in active:
+                    member = interaction.guild.get_member(user_id)
+                    if member:
+                        try:
+                            await member.send(f"⚠️ **Rappel Présence**\nTu n'as pas encore marqué ta présence pour **l'opération de ce soir 21h**.")
+                            reminded += 1
+                            await asyncio.sleep(0.5)  # Petite pause pour éviter le rate limit
+                        except:
+                            pass
+
+            await interaction.followup.send(f"✅ Rappel envoyé à **{reminded}** membre(s).", ephemeral=True)
+        except Exception as e:
+            print(e)
+            await interaction.followup.send("❌ Une erreur est survenue lors de l'envoi des rappels.", ephemeral=True)
 
 # ==================== TABLEAU ====================
 async def update_presence_tableau():
@@ -236,7 +245,6 @@ async def reset(ctx):
     await ctx.send("🗑️ Présences du jour réinitialisées.")
     await update_presence_tableau()
 
-# Commande d'aide
 @bot.command(name="aide", aliases=["commands"])
 async def aide(ctx):
     embed = discord.Embed(title="📜 Commandes du Bot Présence", color=discord.Color.blurple())
