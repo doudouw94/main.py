@@ -236,11 +236,12 @@ async def reset(ctx):
     await ctx.send("🗑️ Présences du jour réinitialisées.")
     await update_presence_tableau()
 
-@bot.command(name="aide", aliases=["help", "commands"])
+# Commande d'aide
+@bot.command(name="aide", aliases=["commands"])
 async def aide(ctx):
     embed = discord.Embed(title="📜 Commandes du Bot Présence", color=discord.Color.blurple())
     embed.add_field(name="**Commandes Générales**", 
-                    value="`p!aide` ou `p!help`\n`p!listusers`\n`p!stats`", inline=False)
+                    value="`p!aide`\n`p!listusers`\n`p!stats`", inline=False)
     embed.add_field(name="**Commandes Admin**", 
                     value="`p!setpresence`\n`p!adduser @user`\n`p!removeuser @user`\n`p!reset`", inline=False)
     await ctx.send(embed=embed)
