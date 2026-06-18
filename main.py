@@ -68,7 +68,7 @@ class PresenceView(discord.ui.View):
                 try:
                     msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
                     note = f"Retard de {msg.content} min"
-                except:
+                except asyncio.TimeoutError:
                     note = "Retard non précisé"
 
             with get_db() as conn:
@@ -76,7 +76,7 @@ class PresenceView(discord.ui.View):
                     c.execute("""
                         INSERT INTO presences (operation_date, user_id, username, status, note)
                         VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (operation_date, user_id) 
+                        ON CONFLICT (operation_date, user_id)
                         DO UPDATE SET status = EXCLUDED.status, note = EXCLUDED.note, submitted_at = NOW()
                     """, (operation_date, interaction.user.id, interaction.user.display_name, status, note))
                     conn.commit()
@@ -84,7 +84,6 @@ class PresenceView(discord.ui.View):
             await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
             await asyncio.sleep(3)
             await update_presence_tableau()
-
         except Exception as e:
             print(e)
             await interaction.response.send_message("❌ Erreur.", ephemeral=True)
@@ -105,7 +104,7 @@ class PresenceView(discord.ui.View):
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
-        
+       
         today = date.today()
         with get_db() as conn:
             with conn.cursor() as c:
@@ -138,7 +137,6 @@ async def update_presence_tableau():
             with conn.cursor() as c:
                 c.execute("SELECT username FROM authorized_users ORDER BY username")
                 all_users = [row[0] for row in c.fetchall()]
-
                 c.execute("SELECT username, status, note FROM presences WHERE operation_date = %s", (date.today(),))
                 data = {row[0]: (row[1], row[2]) for row in c.fetchall()}
 
@@ -159,27 +157,91 @@ async def update_presence_tableau():
         if unmarked: embed.add_field(name=f"⚪ Non marqués ({len(unmarked)})", value="\n".join(unmarked), inline=False)
 
         embed.set_footer(text=f"Dernière MAJ : {datetime.now().strftime('%H:%M:%S')}")
-        await message.edit(embed=embed, view=PresenceView())
 
+        await message.edit(embed=embed, view=PresenceView())
     except Exception as e:
         print(f"Erreur tableau: {e}")
 
 # ==================== COMMANDES ====================
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setpresence(ctx):
     global TABLEAU_CHANNEL_ID, PRESENCE_MESSAGE_ID
     TABLEAU_CHANNEL_ID = ctx.channel.id
-
     embed = discord.Embed(
         title="📋 Présences Opérations 21h",
         description="**Opération de ce soir**",
         color=discord.Color.blurple()
     )
-    
     msg = await ctx.send(embed=embed, view=PresenceView())
     PRESENCE_MESSAGE_ID = msg.id
     await ctx.send("✅ **Tableau créé !**")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def adduser(ctx, member: discord.Member):
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                      (member.id, member.display_name))
+            conn.commit()
+    await ctx.send(f"✅ **{member.display_name}** a été ajouté aux utilisateurs autorisés.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def removeuser(ctx, member: discord.Member):
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM authorized_users WHERE user_id = %s", (member.id,))
+            conn.commit()
+    await ctx.send(f"✅ **{member.display_name}** a été retiré des utilisateurs autorisés.")
+
+@bot.command()
+async def listusers(ctx):
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT username FROM authorized_users ORDER BY username")
+            users = [row[0] for row in c.fetchall()]
+    if users:
+        await ctx.send("**Utilisateurs autorisés :**\n" + "\n".join(f"• {u}" for u in users))
+    else:
+        await ctx.send("Aucun utilisateur autorisé pour le moment.")
+
+@bot.command()
+async def stats(ctx):
+    today = date.today()
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT status, COUNT(*) FROM presences WHERE operation_date = %s GROUP BY status", (today,))
+            stats = dict(c.fetchall())
+            c.execute("SELECT COUNT(*) FROM authorized_users")
+            total = c.fetchone()[0]
+    
+    embed = discord.Embed(title="📊 Statistiques Présences", color=discord.Color.gold())
+    embed.add_field(name="Total autorisés", value=total, inline=False)
+    embed.add_field(name="✅ Présents", value=stats.get("present", 0), inline=True)
+    embed.add_field(name="⏰ En retard", value=stats.get("late", 0), inline=True)
+    embed.add_field(name="❌ Absents", value=stats.get("absent", 0), inline=True)
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def reset(ctx):
+    today = date.today()
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM presences WHERE operation_date = %s", (today,))
+            conn.commit()
+    await ctx.send("🗑️ Présences du jour réinitialisées.")
+    await update_presence_tableau()
+
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(title="📜 Commandes du Bot Présence", color=discord.Color.blurple())
+    embed.add_field(name="**Commandes Générales**", value="`p!help`\n`p!listusers`\n`p!stats`", inline=False)
+    embed.add_field(name="**Commandes Admin**", value="`p!setpresence`\n`p!adduser @user`\n`p!removeuser @user`\n`p!reset`", inline=False)
+    await ctx.send(embed=embed)
 
 @bot.event
 async def on_ready():
