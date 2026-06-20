@@ -13,7 +13,7 @@ bot = commands.Bot(command_prefix="p!", intents=intents)
 
 TABLEAU_CHANNEL_ID = None
 PRESENCE_MESSAGE_ID = None
-GUILD_ID = None  # ← Tu peux le remplir manuellement si tu veux
+GUILD_ID = None
 
 # ==================== DATABASE ====================
 def get_db():
@@ -70,18 +70,15 @@ class PresenceView(discord.ui.View):
                 await interaction.response.send_message("À combien de minutes de retard ?", ephemeral=True)
                 try:
                     msg = await bot.wait_for(
-                        'message', 
-                        check=lambda m: m.author == interaction.user and m.channel == interaction.channel, 
+                        'message',
+                        check=lambda m: m.author == interaction.user and m.channel == interaction.channel,
                         timeout=60
                     )
                     note = f"Retard de {msg.content} min"
-                    
-                    # Suppression automatique du message
                     try:
                         await msg.delete()
                     except:
                         pass
-
                 except asyncio.TimeoutError:
                     note = "Retard non précisé"
             else:
@@ -94,7 +91,7 @@ class PresenceView(discord.ui.View):
                         INSERT INTO presences (operation_date, user_id, username, status, note)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (operation_date, user_id)
-                        DO UPDATE SET status = EXCLUDED.status, note = EXCLUDED.note, 
+                        DO UPDATE SET status = EXCLUDED.status, note = EXCLUDED.note,
                                       username = EXCLUDED.username, submitted_at = NOW()
                     """, (operation_date, interaction.user.id, interaction.user.display_name, status, note))
                     conn.commit()
@@ -128,11 +125,11 @@ class PresenceView(discord.ui.View):
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
-
+        
         await interaction.response.defer(ephemeral=True)
-
         today = date.today()
         reminded = 0
+
         try:
             with get_db() as conn:
                 with conn.cursor() as c:
@@ -157,7 +154,6 @@ class PresenceView(discord.ui.View):
             print(e)
             await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
 
-
 # ==================== TABLEAU ====================
 async def update_presence_tableau():
     if not PRESENCE_MESSAGE_ID or not TABLEAU_CHANNEL_ID:
@@ -169,11 +165,11 @@ async def update_presence_tableau():
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("SELECT user_id, username FROM authorized_users ORDER BY username")
-                authorized = dict(c.fetchall())  # user_id: username
-
+                authorized = dict(c.fetchall())
+                
                 c.execute("""
-                    SELECT user_id, username, status, note 
-                    FROM presences 
+                    SELECT user_id, username, status, note
+                    FROM presences
                     WHERE operation_date = %s
                 """, (date.today(),))
                 data = {row[0]: (row[1], row[2], row[3]) for row in c.fetchall()}
@@ -193,7 +189,6 @@ async def update_presence_tableau():
             if user_id in data:
                 stored_name, status, note = data[user_id]
                 display_name = stored_name or auth_username
-
                 if status == "present":
                     present.append(f"✅ {display_name}")
                 elif status == "late":
@@ -218,9 +213,7 @@ async def update_presence_tableau():
     except Exception as e:
         print(f"Erreur tableau: {e}")
 
-
 # ==================== COMMANDES ====================
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setpresence(ctx):
@@ -237,48 +230,94 @@ async def setpresence(ctx):
     PRESENCE_MESSAGE_ID = msg.id
     await ctx.send("✅ **Tableau de présence créé !**")
 
-
-@bot.command()
+@bot.command(aliases=['addusers'])
 @commands.has_permissions(administrator=True)
-async def adduser(ctx, member: discord.Member):
+async def adduser(ctx, *members: discord.Member):
+    """Ajoute un ou plusieurs utilisateurs"""
+    if not members:
+        return await ctx.send("❌ Mentionne au moins un membre : `p!adduser @user`")
+
+    added = []
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                      (member.id, member.display_name))
+            for member in members:
+                c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                          (member.id, member.display_name))
+                if c.rowcount > 0:
+                    added.append(member.display_name)
             conn.commit()
-    await ctx.send(f"✅ **{member.display_name}** ajouté aux utilisateurs autorisés.")
 
+    await ctx.send(f"✅ **{len(added)}** utilisateur(s) ajouté(s) :\n" + "\n".join(f"• {u}" for u in added))
 
-@bot.command()
+@bot.command(aliases=['removeusers', 'deluser', 'delusers'])
 @commands.has_permissions(administrator=True)
-async def removeuser(ctx, member: discord.Member):
+async def removeuser(ctx, *members: discord.Member):
+    """Retire un ou plusieurs utilisateurs des présences"""
+    if not members:
+        return await ctx.send("❌ Utilisation : `p!removeuser @user1 @user2 ...`")
+
+    removed = []
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute("DELETE FROM authorized_users WHERE user_id = %s", (member.id,))
+            for member in members:
+                c.execute("DELETE FROM authorized_users WHERE user_id = %s", (member.id,))
+                if c.rowcount > 0:
+                    removed.append(member.display_name)
             conn.commit()
-    await ctx.send(f"✅ **{member.display_name}** retiré des utilisateurs autorisés.")
 
+    if removed:
+        await ctx.send(f"✅ **{len(removed)}** utilisateur(s) retiré(s) :\n" + "\n".join(f"• {name}" for name in removed))
+        await update_presence_tableau()
+    else:
+        await ctx.send("⚠️ Aucun des utilisateurs mentionnés n'était dans la liste.")
+
+@bot.command(aliases=['removeid', 'delid'])
+@commands.has_permissions(administrator=True)
+async def removebyid(ctx, *user_ids: int):
+    """Retire des utilisateurs par leur ID Discord"""
+    if not user_ids:
+        return await ctx.send("❌ Utilisation : `p!removebyid 123456789 987654321`")
+
+    removed = []
+    with get_db() as conn:
+        with conn.cursor() as c:
+            for uid in user_ids:
+                c.execute("SELECT username FROM authorized_users WHERE user_id = %s", (uid,))
+                row = c.fetchone()
+                if row:
+                    c.execute("DELETE FROM authorized_users WHERE user_id = %s", (uid,))
+                    removed.append(f"{row[0]} ({uid})")
+            conn.commit()
+
+    if removed:
+        await ctx.send(f"✅ **{len(removed)}** utilisateur(s) retiré(s) par ID :\n" + "\n".join(f"• {name}" for name in removed))
+        await update_presence_tableau()
+    else:
+        await ctx.send("⚠️ Aucun ID correspondant trouvé.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def cleanusers(ctx):
     """Supprime automatiquement les utilisateurs qui ont quitté le serveur"""
     await ctx.send("🔄 Nettoyage des membres partis...")
-    removed = 0
 
+    removed = []
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("SELECT user_id, username FROM authorized_users")
             users = c.fetchall()
-
+            
             for user_id, username in users:
                 if not ctx.guild.get_member(user_id):
                     c.execute("DELETE FROM authorized_users WHERE user_id = %s", (user_id,))
-                    removed += 1
+                    removed.append(username)
             conn.commit()
 
-    await ctx.send(f"✅ **{removed}** utilisateur(s) supprimé(s) (ils ont quitté le serveur).")
-
+    if removed:
+        await ctx.send(f"✅ **{len(removed)}** utilisateur(s) supprimé(s) (ils ont quitté le serveur) :\n" + "\n".join(f"• {u}" for u in removed))
+        await update_presence_tableau()
+    else:
+        await ctx.send("✅ Aucun membre à nettoyer.")
 
 @bot.command()
 async def listusers(ctx):
@@ -287,7 +326,6 @@ async def listusers(ctx):
             c.execute("SELECT username FROM authorized_users ORDER BY username")
             users = [row[0] for row in c.fetchall()]
     await ctx.send("**Utilisateurs autorisés :**\n" + "\n".join(f"• {u}" for u in users) if users else "Aucun utilisateur autorisé.")
-
 
 @bot.command()
 async def stats(ctx):
@@ -306,7 +344,6 @@ async def stats(ctx):
     embed.add_field(name="❌ Absents", value=stats.get("absent", 0), inline=True)
     await ctx.send(embed=embed)
 
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def reset(ctx):
@@ -318,30 +355,27 @@ async def reset(ctx):
     await ctx.send("🗑️ Présences du jour réinitialisées.")
     await update_presence_tableau()
 
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def forceupdate(ctx):
     await update_presence_tableau()
     await ctx.send("✅ Tableau mis à jour.")
 
-
-@bot.command(name="aide", aliases=["commands"])
+@bot.command(name="aide", aliases=["commands", "help"])
 async def aide(ctx):
     embed = discord.Embed(title="📜 Commandes du Bot Présence", color=discord.Color.blurple())
-    embed.add_field(name="**Commandes Générales**", value="`p!aide`\n`p!listusers`\n`p!stats`", inline=False)
-    embed.add_field(name="**Commandes Admin**", 
-                    value="`p!setpresence`\n`p!adduser @user`\n`p!removeuser @user`\n`p!cleanusers`\n`p!reset`\n`p!forceupdate`", inline=False)
+    embed.add_field(name="**Commandes Générales**", 
+                    value="`p!aide`\n`p!listusers`\n`p!stats`", inline=False)
+    embed.add_field(name="**Commandes Admin**",
+                    value="`p!setpresence`\n`p!adduser @user`\n`p!removeuser @user`\n`p!removebyid ID`\n`p!cleanusers`\n`p!reset`\n`p!forceupdate`",
+                    inline=False)
     await ctx.send(embed=embed)
-
 
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
-    # Mise à jour initiale si le tableau existe déjà
     if TABLEAU_CHANNEL_ID and PRESENCE_MESSAGE_ID:
         await update_presence_tableau()
-
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
