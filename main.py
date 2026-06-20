@@ -56,7 +56,6 @@ class PresenceView(discord.ui.View):
 
     async def register(self, interaction: discord.Interaction, status: str):
         try:
-            # Vérification autorisation
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
@@ -84,7 +83,6 @@ class PresenceView(discord.ui.View):
             else:
                 await interaction.response.send_message(f"✅ **{status.upper()}** enregistré !", ephemeral=True)
 
-            # Enregistrement en base
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("""
@@ -233,7 +231,6 @@ async def setpresence(ctx):
 @bot.command(aliases=['addusers'])
 @commands.has_permissions(administrator=True)
 async def adduser(ctx, *members: discord.Member):
-    """Ajoute un ou plusieurs utilisateurs"""
     if not members:
         return await ctx.send("❌ Mentionne au moins un membre : `p!adduser @user`")
 
@@ -252,7 +249,6 @@ async def adduser(ctx, *members: discord.Member):
 @bot.command(aliases=['removeusers', 'deluser', 'delusers'])
 @commands.has_permissions(administrator=True)
 async def removeuser(ctx, *members: discord.Member):
-    """Retire un ou plusieurs utilisateurs des présences"""
     if not members:
         return await ctx.send("❌ Utilisation : `p!removeuser @user1 @user2 ...`")
 
@@ -274,7 +270,6 @@ async def removeuser(ctx, *members: discord.Member):
 @bot.command(aliases=['removeid', 'delid'])
 @commands.has_permissions(administrator=True)
 async def removebyid(ctx, *user_ids: int):
-    """Retire des utilisateurs par leur ID Discord"""
     if not user_ids:
         return await ctx.send("❌ Utilisation : `p!removebyid 123456789 987654321`")
 
@@ -298,7 +293,6 @@ async def removebyid(ctx, *user_ids: int):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def cleanusers(ctx):
-    """Supprime automatiquement les utilisateurs qui ont quitté le serveur"""
     await ctx.send("🔄 Nettoyage des membres partis...")
 
     removed = []
@@ -361,7 +355,7 @@ async def forceupdate(ctx):
     await update_presence_tableau()
     await ctx.send("✅ Tableau mis à jour.")
 
-@bot.command(name="aide", aliases=["commands", "help"])
+@bot.command(name="aide", aliases=["commands"])  # ← "help" supprimé
 async def aide(ctx):
     embed = discord.Embed(title="📜 Commandes du Bot Présence", color=discord.Color.blurple())
     embed.add_field(name="**Commandes Générales**", 
