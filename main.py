@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, time  # ← time ajouté ici
 import asyncio
 
 intents = discord.Intents.default()
@@ -16,8 +16,8 @@ TABLEAU_CHANNEL_ID = None
 PRESENCE_MESSAGE_ID = None
 GUILD_ID = None
 
-# Heure de création automatique du tableau
-TABLEAU_HOUR = 15
+# Heure de création automatique du tableau (modifiable)
+TABLEAU_HOUR = 12
 TABLEAU_MINUTE = 30
 
 # ==================== DATABASE ====================
@@ -181,7 +181,7 @@ async def create_daily_presence_table():
 
 
 async def update_presence_tableau():
-    global PRESENCE_MESSAGE_ID  # ← Déclaration global en haut
+    global PRESENCE_MESSAGE_ID
     
     if not PRESENCE_MESSAGE_ID or not TABLEAU_CHANNEL_ID:
         return
@@ -245,7 +245,7 @@ async def update_presence_tableau():
         print(f"Erreur tableau: {e}")
 
 # ==================== TÂCHE QUOTIDIENNE ====================
-@tasks.loop(time=datetime.time(hour=TABLEAU_HOUR, minute=TABLEAU_MINUTE))
+@tasks.loop(time=time(hour=TABLEAU_HOUR, minute=TABLEAU_MINUTE))  # ← Correction ici
 async def daily_presence_task():
     await create_daily_presence_table()
 
