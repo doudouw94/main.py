@@ -16,8 +16,8 @@ TABLEAU_CHANNEL_ID = None
 PRESENCE_MESSAGE_ID = None
 GUILD_ID = None
 
-# Heure de création automatique du tableau (modifiable)
-TABLEAU_HOUR = 12
+# Heure de création automatique du tableau
+TABLEAU_HOUR = 15
 TABLEAU_MINUTE = 30
 
 # ==================== DATABASE ====================
@@ -157,7 +157,6 @@ class PresenceView(discord.ui.View):
 
 # ==================== TABLEAU ====================
 async def create_daily_presence_table():
-    """Crée un nouveau tableau pour le jour actuel"""
     if not TABLEAU_CHANNEL_ID:
         return
 
@@ -182,6 +181,8 @@ async def create_daily_presence_table():
 
 
 async def update_presence_tableau():
+    global PRESENCE_MESSAGE_ID  # ← Déclaration global en haut
+    
     if not PRESENCE_MESSAGE_ID or not TABLEAU_CHANNEL_ID:
         return
     try:
@@ -239,7 +240,6 @@ async def update_presence_tableau():
 
     except discord.NotFound:
         print("⚠️ Message du tableau non trouvé.")
-        global PRESENCE_MESSAGE_ID
         PRESENCE_MESSAGE_ID = None
     except Exception as e:
         print(f"Erreur tableau: {e}")
@@ -373,7 +373,6 @@ async def stats(ctx):
 
 @bot.command()
 async def history(ctx, days: int = 7):
-    """Historique des présences"""
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("""
