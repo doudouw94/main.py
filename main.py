@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
-from datetime import date, datetime, timedelta, time  # ← time ajouté ici
+from datetime import date, datetime, timedelta, time
 import asyncio
 
 intents = discord.Intents.default()
@@ -16,7 +16,7 @@ TABLEAU_CHANNEL_ID = None
 PRESENCE_MESSAGE_ID = None
 GUILD_ID = None
 
-# Heure de création automatique du tableau (modifiable)
+# Heure de création automatique du tableau
 TABLEAU_HOUR = 12
 TABLEAU_MINUTE = 30
 
@@ -245,7 +245,7 @@ async def update_presence_tableau():
         print(f"Erreur tableau: {e}")
 
 # ==================== TÂCHE QUOTIDIENNE ====================
-@tasks.loop(time=time(hour=TABLEAU_HOUR, minute=TABLEAU_MINUTE))  # ← Correction ici
+@tasks.loop(time=time(hour=TABLEAU_HOUR, minute=TABLEAU_MINUTE))
 async def daily_presence_task():
     await create_daily_presence_table()
 
@@ -323,6 +323,28 @@ async def removeuser(ctx, *args):
 
 
 @bot.command()
+async def listusers(ctx):
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT username, user_id FROM authorized_users ORDER BY username")
+            users = c.fetchall()
+    
+    if not users:
+        return await ctx.send("Aucun utilisateur autorisé.")
+
+    embed = discord.Embed(title="👥 Utilisateurs Autorisé", color=discord.Color.blurple())
+    
+    description = ""
+    for username, user_id in users:
+        description += f"**{username}**\n`{user_id}`\n\n"
+    
+    embed.description = description
+    embed.set_footer(text=f"Total : {len(users)} utilisateurs")
+    
+    await ctx.send(embed=embed)
+
+
+@bot.command()
 @commands.has_permissions(administrator=True)
 async def cleanusers(ctx):
     await ctx.send("🔄 Nettoyage des membres partis...")
@@ -342,15 +364,6 @@ async def cleanusers(ctx):
         await update_presence_tableau()
     else:
         await ctx.send("✅ Aucun membre à nettoyer.")
-
-
-@bot.command()
-async def listusers(ctx):
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("SELECT username FROM authorized_users ORDER BY username")
-            users = [row[0] for row in c.fetchall()]
-    await ctx.send("**Utilisateurs autorisés :**\n" + "\n".join(f"• {u}" for u in users) if users else "Aucun utilisateur autorisé.")
 
 
 @bot.command()
