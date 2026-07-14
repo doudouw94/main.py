@@ -1,5 +1,4 @@
-Oui, voici le code complet à 100% (avec tes modifications appliquées) :
-Pythonimport discord
+import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
