@@ -1,4 +1,5 @@
-import discord
+Oui, voici le code complet à 100% (avec tes modifications appliquées) :
+Pythonimport discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
@@ -16,9 +17,9 @@ TABLEAU_CHANNEL_ID = None
 PRESENCE_MESSAGE_ID = None
 GUILD_ID = None
 
-# Heure de création automatique du tableau
-TABLEAU_HOUR = 12
-TABLEAU_MINUTE = 30
+# Heure de l'opération (pour l'affichage)
+OPERATION_HOUR = 21
+OPERATION_MINUTE = 30
 
 # ==================== DATABASE ====================
 def get_db():
@@ -69,7 +70,6 @@ class PresenceView(discord.ui.View):
 
             operation_date = date.today()
             note = None
-
             if status == "late":
                 await interaction.response.send_message("À combien de minutes de retard ?", ephemeral=True)
                 try:
@@ -128,7 +128,7 @@ class PresenceView(discord.ui.View):
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
-        
+       
         await interaction.response.defer(ephemeral=True)
         today = date.today()
         reminded = 0
@@ -145,7 +145,7 @@ class PresenceView(discord.ui.View):
                     member = interaction.guild.get_member(user_id)
                     if member:
                         try:
-                            await member.send(f"⚠️ **Rappel Présence**\nTu n'as pas encore marqué ta présence pour **l'opération de ce soir 21h**.")
+                            await member.send(f"⚠️ **Rappel Présence**\nTu n'as pas encore marqué ta présence pour **l'opération de ce soir {OPERATION_HOUR}h{OPERATION_MINUTE:02d}**.")
                             reminded += 1
                             await asyncio.sleep(0.5)
                         except:
@@ -159,30 +159,28 @@ class PresenceView(discord.ui.View):
 async def create_daily_presence_table():
     if not TABLEAU_CHANNEL_ID:
         return
-
     channel = bot.get_channel(TABLEAU_CHANNEL_ID)
     if not channel:
         return
 
     embed = discord.Embed(
-        title=f"📋 Présences Opérations 21h - {date.today().strftime('%d/%m/%Y')}",
+        title=f"📋 Présences Opérations {OPERATION_HOUR}h{OPERATION_MINUTE:02d} - {date.today().strftime('%d/%m/%Y')}",
         description="**Opération de ce soir**",
         color=discord.Color.blurple()
     )
     embed.set_footer(text="Clique sur les boutons pour marquer ta présence")
-
-    msg = await channel.send(embed=embed, view=PresenceView())
     
+    msg = await channel.send(embed=embed, view=PresenceView())
+   
     global PRESENCE_MESSAGE_ID
     PRESENCE_MESSAGE_ID = msg.id
-    
+   
     await update_presence_tableau()
     print(f"✅ Nouveau tableau créé pour {date.today()}")
 
-
 async def update_presence_tableau():
     global PRESENCE_MESSAGE_ID
-    
+   
     if not PRESENCE_MESSAGE_ID or not TABLEAU_CHANNEL_ID:
         return
     try:
@@ -193,7 +191,7 @@ async def update_presence_tableau():
             with conn.cursor() as c:
                 c.execute("SELECT user_id, username FROM authorized_users ORDER BY username")
                 authorized = dict(c.fetchall())
-                
+               
                 c.execute("""
                     SELECT user_id, username, status, note
                     FROM presences
@@ -202,7 +200,7 @@ async def update_presence_tableau():
                 data = {row[0]: (row[1], row[2], row[3]) for row in c.fetchall()}
 
         embed = discord.Embed(
-            title=f"📋 Présences Opérations 21h - {date.today().strftime('%d/%m/%Y')}",
+            title=f"📋 Présences Opérations {OPERATION_HOUR}h{OPERATION_MINUTE:02d} - {date.today().strftime('%d/%m/%Y')}",
             description="**Opération de ce soir**",
             color=discord.Color.blurple()
         )
@@ -235,7 +233,6 @@ async def update_presence_tableau():
             embed.add_field(name=f"⚪ Non marqués ({len(unmarked)})", value="\n".join(unmarked), inline=False)
 
         embed.set_footer(text=f"Dernière MAJ : {datetime.now().strftime('%H:%M:%S')}")
-
         await message.edit(embed=embed, view=PresenceView())
 
     except discord.NotFound:
@@ -243,11 +240,6 @@ async def update_presence_tableau():
         PRESENCE_MESSAGE_ID = None
     except Exception as e:
         print(f"Erreur tableau: {e}")
-
-# ==================== TÂCHE QUOTIDIENNE ====================
-@tasks.loop(time=time(hour=TABLEAU_HOUR, minute=TABLEAU_MINUTE))
-async def daily_presence_task():
-    await create_daily_presence_table()
 
 # ==================== COMMANDES ====================
 @bot.command()
@@ -259,13 +251,11 @@ async def setpresence(ctx):
     await create_daily_presence_table()
     await ctx.send("✅ **Tableau de présence du jour créé !**")
 
-
 @bot.command(aliases=['add'])
 @commands.has_permissions(administrator=True)
 async def adduser(ctx, *args):
     if not args:
         return await ctx.send("❌ Utilisation : `p!add @user` ou `p!add 123456789`")
-
     added = []
     with get_db() as conn:
         with conn.cursor() as c:
@@ -279,27 +269,23 @@ async def adduser(ctx, *args):
                         member = await commands.MemberConverter().convert(ctx, arg)
                         user_id = member.id
                         username = member.display_name
-
                     c.execute("""
-                        INSERT INTO authorized_users (user_id, username) 
-                        VALUES (%s, %s) 
+                        INSERT INTO authorized_users (user_id, username)
+                        VALUES (%s, %s)
                         ON CONFLICT (user_id) DO UPDATE SET username = %s
                     """, (user_id, username, username))
                     added.append(username)
                 except:
                     await ctx.send(f"⚠️ Impossible de trouver : {arg}")
             conn.commit()
-
     await ctx.send(f"✅ **{len(added)}** utilisateur(s) ajouté(s)/mis à jour :\n" + "\n".join(f"• {u}" for u in added))
     await update_presence_tableau()
-
 
 @bot.command(aliases=['del', 'remove'])
 @commands.has_permissions(administrator=True)
 async def removeuser(ctx, *args):
     if not args:
         return await ctx.send("❌ Utilisation : `p!del @user` ou `p!del 123456789`")
-
     removed = []
     with get_db() as conn:
         with conn.cursor() as c:
@@ -314,13 +300,11 @@ async def removeuser(ctx, *args):
                 except:
                     pass
             conn.commit()
-
     if removed:
         await ctx.send(f"✅ **{len(removed)}** utilisateur(s) retiré(s) :\n" + "\n".join(f"• {u}" for u in removed))
         await update_presence_tableau()
     else:
         await ctx.send("⚠️ Aucun utilisateur trouvé.")
-
 
 @bot.command()
 async def listusers(ctx):
@@ -328,21 +312,19 @@ async def listusers(ctx):
         with conn.cursor() as c:
             c.execute("SELECT username, user_id FROM authorized_users ORDER BY username")
             users = c.fetchall()
-    
+   
     if not users:
         return await ctx.send("Aucun utilisateur autorisé.")
-
     embed = discord.Embed(title="👥 Utilisateurs Autorisé", color=discord.Color.blurple())
-    
+   
     description = ""
     for username, user_id in users:
         description += f"**{username}**\n`{user_id}`\n\n"
-    
+   
     embed.description = description
     embed.set_footer(text=f"Total : {len(users)} utilisateurs")
-    
+   
     await ctx.send(embed=embed)
-
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -358,13 +340,11 @@ async def cleanusers(ctx):
                     c.execute("DELETE FROM authorized_users WHERE user_id = %s", (user_id,))
                     removed.append(username)
             conn.commit()
-
     if removed:
         await ctx.send(f"✅ **{len(removed)}** utilisateur(s) supprimé(s) :\n" + "\n".join(f"• {u}" for u in removed))
         await update_presence_tableau()
     else:
         await ctx.send("✅ Aucun membre à nettoyer.")
-
 
 @bot.command()
 async def stats(ctx):
@@ -375,7 +355,6 @@ async def stats(ctx):
             stats = dict(c.fetchall())
             c.execute("SELECT COUNT(*) FROM authorized_users")
             total = c.fetchone()[0]
-
     embed = discord.Embed(title="📊 Statistiques Présences", color=discord.Color.gold())
     embed.add_field(name="Total autorisés", value=total, inline=False)
     embed.add_field(name="✅ Présents", value=stats.get("present", 0), inline=True)
@@ -383,23 +362,21 @@ async def stats(ctx):
     embed.add_field(name="❌ Absents", value=stats.get("absent", 0), inline=True)
     await ctx.send(embed=embed)
 
-
 @bot.command()
 async def history(ctx, days: int = 7):
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("""
-                SELECT operation_date, COUNT(*) as total, 
+                SELECT operation_date, COUNT(*) as total,
                        COUNT(CASE WHEN status='present' THEN 1 END) as present,
                        COUNT(CASE WHEN status='late' THEN 1 END) as late,
                        COUNT(CASE WHEN status='absent' THEN 1 END) as absent
-                FROM presences 
-                WHERE operation_date >= %s 
-                GROUP BY operation_date 
+                FROM presences
+                WHERE operation_date >= %s
+                GROUP BY operation_date
                 ORDER BY operation_date DESC
             """, (date.today() - timedelta(days=days),))
             rows = c.fetchall()
-
     embed = discord.Embed(title=f"Historique des {days} derniers jours", color=discord.Color.gold())
     for row in rows:
         embed.add_field(
@@ -408,7 +385,6 @@ async def history(ctx, days: int = 7):
             inline=False
         )
     await ctx.send(embed=embed)
-
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -421,13 +397,11 @@ async def reset(ctx):
     await ctx.send("🗑️ Présences du jour réinitialisées.")
     await update_presence_tableau()
 
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def forceupdate(ctx):
     await update_presence_tableau()
     await ctx.send("✅ Tableau mis à jour.")
-
 
 @bot.command(name="aide", aliases=["commands"])
 async def aide(ctx):
@@ -439,16 +413,13 @@ async def aide(ctx):
                     inline=False)
     await ctx.send(embed=embed)
 
-
 # ==================== EVENTS ====================
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
-    daily_presence_task.start()
-    
+    # La création automatique est désactivée
     if TABLEAU_CHANNEL_ID and PRESENCE_MESSAGE_ID:
         await update_presence_tableau()
-
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
