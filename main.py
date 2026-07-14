@@ -16,6 +16,9 @@ TABLEAU_CHANNEL_ID = None
 PRESENCE_MESSAGE_ID = None
 GUILD_ID = None
 
+# Channel dédié aux warns
+WARN_CHANNEL_ID = 1522688884368998550   # ← Ton channel warn
+
 # Heure de l'opération
 OPERATION_HOUR = 21
 OPERATION_MINUTE = 30
@@ -258,8 +261,14 @@ def migrate_warns():
 
 migrate_warns()
 
+def is_warn_channel(ctx):
+    if WARN_CHANNEL_ID is None:
+        return True
+    return ctx.channel.id == WARN_CHANNEL_ID
+
 @bot.command()
 @commands.has_permissions(kick_members=True)
+@commands.check(is_warn_channel)
 async def warn(ctx, member: discord.Member, *, reason: str = "Aucune raison donnée"):
     if member.bot:
         return await ctx.send("❌ Tu ne peux pas warn un bot.")
@@ -306,6 +315,7 @@ async def warn(ctx, member: discord.Member, *, reason: str = "Aucune raison donn
 
 @bot.command()
 @commands.has_permissions(kick_members=True)
+@commands.check(is_warn_channel)
 async def warns(ctx, member: discord.Member):
     with get_db() as conn:
         with conn.cursor() as c:
@@ -332,6 +342,7 @@ async def warns(ctx, member: discord.Member):
 
 @bot.command()
 @commands.has_permissions(kick_members=True)
+@commands.check(is_warn_channel)
 async def unwarn(ctx, member: discord.Member, *, reason: str = "Aucune raison"):
     with get_db() as conn:
         with conn.cursor() as c:
@@ -508,7 +519,7 @@ async def forceupdate(ctx):
 async def aide(ctx):
     embed = discord.Embed(title="📜 Commandes du Bot Diamond City", color=discord.Color.blurple())
     embed.add_field(name="**Présence**", value="`p!setpresence`\n`p!add @user`\n`p!listusers`\n`p!stats`", inline=False)
-    embed.add_field(name="**Warns**", value="`p!warn @user raison`\n`p!warns @user`\n`p!unwarn @user`", inline=False)
+    embed.add_field(name="**Warns**", value="`p!warn @user raison` (uniquement dans le channel warns)\n`p!warns @user`\n`p!unwarn @user`", inline=False)
     await ctx.send(embed=embed)
 
 # ==================== EVENTS ====================
