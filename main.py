@@ -17,7 +17,7 @@ PRESENCE_MESSAGE_ID = None
 GUILD_ID = None
 
 # Channel dédié aux warns
-WARN_CHANNEL_ID = 1522688884368998550   # ← Ton channel warn
+WARN_CHANNEL_ID = 1522688884368998550
 
 # Heure de l'opération
 OPERATION_HOUR = 21
@@ -31,9 +31,9 @@ def migrate_database():
     try:
         with get_db() as conn:
             with conn.cursor() as c:
-                c.execute("DROP TABLE IF EXISTS presences;")
+                # ✅ Correction : On ne supprime plus la table à chaque démarrage
                 c.execute('''
-                    CREATE TABLE presences (
+                    CREATE TABLE IF NOT EXISTS presences (
                         id SERIAL PRIMARY KEY,
                         operation_date DATE NOT NULL,
                         user_id BIGINT NOT NULL,
@@ -44,6 +44,10 @@ def migrate_database():
                         UNIQUE(operation_date, user_id)
                     );
                 ''')
+                
+                # Ajout sécurisé de colonnes si elles n'existent pas
+                c.execute("ALTER TABLE presences ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP DEFAULT NOW();")
+                
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS authorized_users (
                         user_id BIGINT PRIMARY KEY,
@@ -72,7 +76,6 @@ class PresenceView(discord.ui.View):
 
             operation_date = date.today()
             note = None
-
             if status == "late":
                 await interaction.response.send_message("À combien de minutes de retard ?", ephemeral=True)
                 try:
@@ -107,6 +110,7 @@ class PresenceView(discord.ui.View):
 
             if status == "late":
                 await interaction.followup.send(f"✅ **EN RETARD** enregistré !", ephemeral=True)
+
         except Exception as e:
             print(f"Erreur register: {e}")
             if not interaction.response.is_done():
@@ -130,7 +134,7 @@ class PresenceView(discord.ui.View):
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
-        
+       
         await interaction.response.defer(ephemeral=True)
         today = date.today()
         reminded = 0
@@ -141,6 +145,7 @@ class PresenceView(discord.ui.View):
                     active = {row[0] for row in c.fetchall()}
                     c.execute("SELECT user_id FROM authorized_users")
                     all_users = [row[0] for row in c.fetchall()]
+
             for user_id in all_users:
                 if user_id not in active:
                     member = interaction.guild.get_member(user_id)
@@ -163,18 +168,19 @@ async def create_daily_presence_table():
     channel = bot.get_channel(TABLEAU_CHANNEL_ID)
     if not channel:
         return
+
     embed = discord.Embed(
         title=f"📋 Présences Opérations {OPERATION_HOUR}h{OPERATION_MINUTE:02d} - {date.today().strftime('%d/%m/%Y')}",
         description="**Opération de ce soir**",
         color=discord.Color.blurple()
     )
     embed.set_footer(text="Clique sur les boutons pour marquer ta présence")
-   
-    msg = await channel.send(embed=embed, view=PresenceView())
   
+    msg = await channel.send(embed=embed, view=PresenceView())
+ 
     global PRESENCE_MESSAGE_ID
     PRESENCE_MESSAGE_ID = msg.id
-  
+ 
     await update_presence_tableau()
     print(f"✅ Nouveau tableau créé pour {date.today()}")
 
@@ -185,11 +191,12 @@ async def update_presence_tableau():
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(PRESENCE_MESSAGE_ID)
+
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("SELECT user_id, username FROM authorized_users ORDER BY username")
                 authorized = dict(c.fetchall())
-              
+             
                 c.execute("""
                     SELECT user_id, username, status, note
                     FROM presences
@@ -232,6 +239,7 @@ async def update_presence_tableau():
 
         embed.set_footer(text=f"Dernière MAJ : {datetime.now().strftime('%H:%M:%S')}")
         await message.edit(embed=embed, view=PresenceView())
+
     except discord.NotFound:
         print("⚠️ Message du tableau non trouvé.")
         PRESENCE_MESSAGE_ID = None
@@ -239,7 +247,6 @@ async def update_presence_tableau():
         print(f"Erreur tableau: {e}")
 
 # ==================== SYSTEME DE WARNS ====================
-
 def migrate_warns():
     try:
         with get_db() as conn:
@@ -274,7 +281,6 @@ async def warn(ctx, member: discord.Member, *, reason: str = "Aucune raison donn
         return await ctx.send("❌ Tu ne peux pas warn un bot.")
     if member == ctx.author:
         return await ctx.send("❌ Tu ne peux pas te warn toi-même.")
-
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("""
@@ -282,12 +288,10 @@ async def warn(ctx, member: discord.Member, *, reason: str = "Aucune raison donn
                 VALUES (%s, %s, %s, %s)
             """, (member.id, ctx.guild.id, ctx.author.id, reason))
             conn.commit()
-
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("SELECT COUNT(*) FROM warns WHERE user_id = %s AND guild_id = %s", (member.id, ctx.guild.id))
             warn_count = c.fetchone()[0]
-
     embed = discord.Embed(
         title="⚠️ Avertissement",
         description=f"**Membre :** {member.mention}\n**Modérateur :** {ctx.author.mention}\n**Raison :** {reason}",
@@ -296,14 +300,12 @@ async def warn(ctx, member: discord.Member, *, reason: str = "Aucune raison donn
     embed.add_field(name="Total", value=f"**{warn_count}/2 warns**", inline=False)
     embed.set_footer(text="Les warns expirent automatiquement après 7 jours de bonne attitude")
     await ctx.send(embed=embed)
-
     if warn_count == 2:
         await ctx.send(
             f"🚨 **ATTENTION TOUT LE MONDE** 🚨\n"
             f"{member.mention} a atteint **2 warns** !\n\n"
             f"**Au prochain avertissement → c’est terminé pour lui.**"
         )
-
     try:
         await member.send(embed=discord.Embed(
             title=f"⚠️ Avertissement sur {ctx.guild.name}",
@@ -320,16 +322,14 @@ async def warns(ctx, member: discord.Member):
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("""
-                SELECT reason, warned_at 
-                FROM warns 
-                WHERE user_id = %s AND guild_id = %s 
+                SELECT reason, warned_at
+                FROM warns
+                WHERE user_id = %s AND guild_id = %s
                 ORDER BY warned_at DESC
             """, (member.id, ctx.guild.id))
             warn_list = c.fetchall()
-
     if not warn_list:
         return await ctx.send(f"✅ {member.mention} n'a aucun avertissement.")
-
     embed = discord.Embed(title=f"📋 Warns de {member}", color=discord.Color.orange())
     for i, (reason, warned_at) in enumerate(warn_list, 1):
         embed.add_field(
@@ -346,14 +346,12 @@ async def warns(ctx, member: discord.Member):
 async def unwarn(ctx, member: discord.Member, *, reason: str = "Aucune raison"):
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute("DELETE FROM warns WHERE user_id = %s AND guild_id = %s LIMIT 1", 
+            c.execute("DELETE FROM warns WHERE user_id = %s AND guild_id = %s LIMIT 1",
                      (member.id, ctx.guild.id))
             deleted = c.rowcount
             conn.commit()
-
     if deleted == 0:
         return await ctx.send("❌ Ce membre n'a aucun warn à retirer.")
-
     await ctx.send(f"✅ **{member}** a perdu 1 warn.\n**Raison :** {reason}")
 
 # ==================== COMMANDES PRÉSENCE ====================
