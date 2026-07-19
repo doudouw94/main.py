@@ -23,6 +23,10 @@ WARN_CHANNEL_ID = 1522688884368998550
 OPERATION_HOUR = 21
 OPERATION_MINUTE = 30
 
+# Heure de création automatique du nouveau tableau
+CREATE_HOUR = 12
+CREATE_MINUTE = 0
+
 # ==================== DATABASE ====================
 def get_db():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
@@ -31,7 +35,6 @@ def migrate_database():
     try:
         with get_db() as conn:
             with conn.cursor() as c:
-                # ✅ Correction : On ne supprime plus la table à chaque démarrage
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS presences (
                         id SERIAL PRIMARY KEY,
@@ -44,10 +47,8 @@ def migrate_database():
                         UNIQUE(operation_date, user_id)
                     );
                 ''')
-                
-                # Ajout sécurisé de colonnes si elles n'existent pas
                 c.execute("ALTER TABLE presences ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP DEFAULT NOW();")
-                
+               
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS authorized_users (
                         user_id BIGINT PRIMARY KEY,
@@ -110,7 +111,6 @@ class PresenceView(discord.ui.View):
 
             if status == "late":
                 await interaction.followup.send(f"✅ **EN RETARD** enregistré !", ephemeral=True)
-
         except Exception as e:
             print(f"Erreur register: {e}")
             if not interaction.response.is_done():
@@ -134,7 +134,7 @@ class PresenceView(discord.ui.View):
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Seul un admin peut utiliser ce bouton.", ephemeral=True)
-       
+      
         await interaction.response.defer(ephemeral=True)
         today = date.today()
         reminded = 0
@@ -145,7 +145,6 @@ class PresenceView(discord.ui.View):
                     active = {row[0] for row in c.fetchall()}
                     c.execute("SELECT user_id FROM authorized_users")
                     all_users = [row[0] for row in c.fetchall()]
-
             for user_id in all_users:
                 if user_id not in active:
                     member = interaction.guild.get_member(user_id)
@@ -163,6 +162,7 @@ class PresenceView(discord.ui.View):
 
 # ==================== TABLEAU PRÉSENCE ====================
 async def create_daily_presence_table():
+    global PRESENCE_MESSAGE_ID
     if not TABLEAU_CHANNEL_ID:
         return
     channel = bot.get_channel(TABLEAU_CHANNEL_ID)
@@ -175,12 +175,9 @@ async def create_daily_presence_table():
         color=discord.Color.blurple()
     )
     embed.set_footer(text="Clique sur les boutons pour marquer ta présence")
-  
+
     msg = await channel.send(embed=embed, view=PresenceView())
- 
-    global PRESENCE_MESSAGE_ID
     PRESENCE_MESSAGE_ID = msg.id
- 
     await update_presence_tableau()
     print(f"✅ Nouveau tableau créé pour {date.today()}")
 
@@ -191,12 +188,11 @@ async def update_presence_tableau():
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(PRESENCE_MESSAGE_ID)
-
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("SELECT user_id, username FROM authorized_users ORDER BY username")
                 authorized = dict(c.fetchall())
-             
+            
                 c.execute("""
                     SELECT user_id, username, status, note
                     FROM presences
@@ -245,6 +241,15 @@ async def update_presence_tableau():
         PRESENCE_MESSAGE_ID = None
     except Exception as e:
         print(f"Erreur tableau: {e}")
+
+# ==================== TÂCHE AUTOMATIQUE ====================
+@tasks.loop(time=datetime.time(hour=CREATE_HOUR, minute=CREATE_MINUTE))
+async def daily_presence_task():
+    await create_daily_presence_table()
+
+@daily_presence_task.before_loop
+async def before_daily_task():
+    await bot.wait_until_ready()
 
 # ==================== SYSTEME DE WARNS ====================
 def migrate_warns():
@@ -362,7 +367,7 @@ async def setpresence(ctx):
     GUILD_ID = ctx.guild.id
     TABLEAU_CHANNEL_ID = ctx.channel.id
     await create_daily_presence_table()
-    await ctx.send("✅ **Tableau de présence du jour créé !**")
+    await ctx.send("✅ **Tableau de présence créé !** Un nouveau tableau sera créé automatiquement tous les jours à 12h00.")
 
 @bot.command(aliases=['add'])
 @commands.has_permissions(administrator=True)
@@ -524,6 +529,8 @@ async def aide(ctx):
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
+    if not daily_presence_task.is_running():
+        daily_presence_task.start()
     if TABLEAU_CHANNEL_ID and PRESENCE_MESSAGE_ID:
         await update_presence_tableau()
 
