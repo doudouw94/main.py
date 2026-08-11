@@ -8,7 +8,6 @@ import asyncio
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
 bot = commands.Bot(command_prefix="p!", intents=intents)
 
 # ==================== CONFIG ====================
@@ -147,7 +146,6 @@ class PresenceView(discord.ui.View):
                 with conn.cursor() as c:
                     c.execute("SELECT DISTINCT user_id FROM presences WHERE operation_date = %s", (today,))
                     active = {row[0] for row in c.fetchall()}
-
                     c.execute("SELECT user_id FROM authorized_users")
                     all_users = [row[0] for row in c.fetchall()]
 
@@ -389,15 +387,21 @@ async def warns(ctx, member: discord.Member):
 async def unwarn(ctx, member: discord.Member, *, reason: str = "Aucune raison"):
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute(
-                "DELETE FROM warns WHERE user_id = %s AND guild_id = %s LIMIT 1",
-                (member.id, ctx.guild.id)
-            )
-            deleted = c.rowcount
+            # On récupère d'abord le dernier warn
+            c.execute("""
+                SELECT id FROM warns
+                WHERE user_id = %s AND guild_id = %s
+                ORDER BY warned_at DESC
+                LIMIT 1
+            """, (member.id, ctx.guild.id))
+            
+            row = c.fetchone()
+            if not row:
+                return await ctx.send("❌ Ce membre n'a aucun warn à retirer.")
+            
+            # On le supprime
+            c.execute("DELETE FROM warns WHERE id = %s", (row[0],))
             conn.commit()
-
-    if deleted == 0:
-        return await ctx.send("❌ Ce membre n'a aucun warn à retirer.")
 
     await ctx.send(f"✅ **{member}** a perdu 1 warn.\n**Raison :** {reason}")
 
@@ -494,6 +498,7 @@ async def listusers(ctx):
 async def cleanusers(ctx):
     await ctx.send("🔄 Nettoyage des membres partis...")
     removed = []
+
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("SELECT user_id, username FROM authorized_users")
@@ -585,7 +590,7 @@ async def aide(ctx):
     await ctx.send(embed=embed)
 
 # ==================== TÂCHE QUOTIDIENNE ====================
-@tasks.loop(time=time(hour=0, minute=5))  # Tous les jours à 00h05
+@tasks.loop(time=time(hour=0, minute=5)) # Tous les jours à 00h05
 async def daily_presence_reset():
     print("🔄 Création automatique du tableau du jour...")
     await create_daily_presence_table()
