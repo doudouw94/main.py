@@ -19,7 +19,7 @@ WARN_CHANNEL_ID = 1522688884368998550
 
 # Heure de l'opération
 OPERATION_HOUR = 21
-OPERATION_MINUTE = 15
+OPERATION_MINUTE = 00
 
 # ==================== DATABASE ====================
 def get_db():
