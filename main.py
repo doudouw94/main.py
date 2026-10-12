@@ -13,13 +13,10 @@ bot = commands.Bot(command_prefix="p!", intents=intents)
 # ==================== CONFIG ====================
 TABLEAU_CHANNEL_ID = None
 GUILD_ID = None
-
-# Channel dédié aux warns
 WARN_CHANNEL_ID = 1522688884368998550
-
-# Heure de l'opération
 OPERATION_HOUR = 21
 OPERATION_MINUTE = 00
+ROLE_VENDETTA = "Vendetta"
 
 # ==================== DATABASE ====================
 def get_db():
@@ -29,7 +26,6 @@ def migrate_database():
     try:
         with get_db() as conn:
             with conn.cursor() as c:
-                # Plus de DROP → on ne perd plus l'historique
                 c.execute('''
                     CREATE TABLE IF NOT EXISTS presences (
                         id SERIAL PRIMARY KEY,
@@ -62,6 +58,66 @@ def migrate_database():
 
 migrate_database()
 
+def migrate_warns():
+    try:
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS warns (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT NOT NULL,
+                        guild_id BIGINT NOT NULL,
+                        moderator_id BIGINT NOT NULL,
+                        reason TEXT NOT NULL,
+                        warned_at TIMESTAMP DEFAULT NOW()
+                    );
+                ''')
+                conn.commit()
+        print("✅ Table 'warns' prête !")
+    except Exception as e:
+        print(f"⚠️ Erreur table warns : {e}")
+
+migrate_warns()
+
+def has_vendetta(member: discord.Member) -> bool:
+    return any(role.name.lower() == ROLE_VENDETTA.lower() for role in member.roles)
+
+async def sync_authorized_users(guild: discord.Guild):
+    """Synchronise tous les membres qui ont le rôle Vendetta"""
+    added = 0
+    removed = 0
+    with get_db() as conn:
+        with conn.cursor() as c:
+            # Récupère les IDs actuellement autorisés
+            c.execute("SELECT user_id FROM authorized_users")
+            current_authorized = {row[0] for row in c.fetchall()}
+
+            # Membres qui ont le rôle
+            members_with_role = [m for m in guild.members if has_vendetta(m) and not m.bot]
+            members_with_role_ids = {m.id for m in members_with_role}
+
+            # Ajouter ceux qui ont le rôle mais ne sont pas encore autorisés
+            for member in members_with_role:
+                if member.id not in current_authorized:
+                    c.execute("""
+                        INSERT INTO authorized_users (user_id, username)
+                        VALUES (%s, %s)
+                        ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
+                    """, (member.id, member.display_name))
+                    added += 1
+
+            # Retirer ceux qui n'ont plus le rôle
+            for user_id in current_authorized:
+                if user_id not in members_with_role_ids:
+                    c.execute("DELETE FROM authorized_users WHERE user_id = %s", (user_id,))
+                    c.execute("DELETE FROM presences WHERE user_id = %s AND operation_date = %s", (user_id, date.today()))
+                    removed += 1
+
+            conn.commit()
+
+    print(f"🔄 Sync terminé → +{added} ajoutés / -{removed} retirés")
+    await update_presence_tableau(date.today())
+
 # ==================== VIEWS (Présence) ====================
 class PresenceView(discord.ui.View):
     def __init__(self):
@@ -69,6 +125,10 @@ class PresenceView(discord.ui.View):
 
     async def register(self, interaction: discord.Interaction, status: str):
         try:
+            # Vérifie qu'il a bien le rôle Vendetta
+            if not has_vendetta(interaction.user):
+                return await interaction.response.send_message("❌ Tu n'as pas le rôle Vendetta.", ephemeral=True)
+
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
@@ -107,11 +167,11 @@ class PresenceView(discord.ui.View):
                     """, (operation_date, interaction.user.id, interaction.user.display_name, status, note))
                     conn.commit()
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1)
             await update_presence_tableau(operation_date)
 
             if status == "late":
-                await interaction.followup.send(f"✅ **EN RETARD** enregistré !", ephemeral=True)
+                await interaction.followup.send("✅ **EN RETARD** enregistré !", ephemeral=True)
 
         except Exception as e:
             print(f"Erreur register: {e}")
@@ -172,14 +232,12 @@ class PresenceView(discord.ui.View):
 async def create_daily_presence_table():
     if not TABLEAU_CHANNEL_ID:
         return
-
     channel = bot.get_channel(TABLEAU_CHANNEL_ID)
     if not channel:
         return
 
     today = date.today()
 
-    # Vérifier si un tableau existe déjà pour aujourd'hui
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("SELECT message_id FROM presence_messages WHERE operation_date = %s", (today,))
@@ -193,7 +251,6 @@ async def create_daily_presence_table():
         color=discord.Color.blurple()
     )
     embed.set_footer(text="Clique sur les boutons pour marquer ta présence")
-
     msg = await channel.send(embed=embed, view=PresenceView())
 
     with get_db() as conn:
@@ -264,13 +321,13 @@ async def update_presence_tableau(target_date: date = None):
                 unmarked.append(f"⚪ {auth_username}")
 
         if present:
-            embed.add_field(name=f"✅ Présents ({len(present)})", value="\n".join(present), inline=False)
+            embed.add_field(name=f"✅ Présents ({len(present)})", value="\n".join(present) or "Aucun", inline=False)
         if late:
-            embed.add_field(name=f"⏰ En Retard ({len(late)})", value="\n".join(late), inline=False)
+            embed.add_field(name=f"⏰ En Retard ({len(late)})", value="\n".join(late) or "Aucun", inline=False)
         if absent:
-            embed.add_field(name=f"❌ Absents ({len(absent)})", value="\n".join(absent), inline=False)
+            embed.add_field(name=f"❌ Absents ({len(absent)})", value="\n".join(absent) or "Aucun", inline=False)
         if unmarked:
-            embed.add_field(name=f"⚪ Non marqués ({len(unmarked)})", value="\n".join(unmarked), inline=False)
+            embed.add_field(name=f"⚪ Non marqués ({len(unmarked)})", value="\n".join(unmarked) or "Aucun", inline=False)
 
         embed.set_footer(text=f"Dernière MAJ : {datetime.now().strftime('%H:%M:%S')}")
         await message.edit(embed=embed, view=PresenceView())
@@ -281,27 +338,6 @@ async def update_presence_tableau(target_date: date = None):
         print(f"Erreur tableau: {e}")
 
 # ==================== SYSTEME DE WARNS ====================
-def migrate_warns():
-    try:
-        with get_db() as conn:
-            with conn.cursor() as c:
-                c.execute('''
-                    CREATE TABLE IF NOT EXISTS warns (
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT NOT NULL,
-                        guild_id BIGINT NOT NULL,
-                        moderator_id BIGINT NOT NULL,
-                        reason TEXT NOT NULL,
-                        warned_at TIMESTAMP DEFAULT NOW()
-                    );
-                ''')
-                conn.commit()
-        print("✅ Table 'warns' prête !")
-    except Exception as e:
-        print(f"⚠️ Erreur table warns : {e}")
-
-migrate_warns()
-
 def is_warn_channel(ctx):
     if WARN_CHANNEL_ID is None:
         return True
@@ -387,19 +423,17 @@ async def warns(ctx, member: discord.Member):
 async def unwarn(ctx, member: discord.Member, *, reason: str = "Aucune raison"):
     with get_db() as conn:
         with conn.cursor() as c:
-            # On récupère d'abord le dernier warn
             c.execute("""
                 SELECT id FROM warns
                 WHERE user_id = %s AND guild_id = %s
                 ORDER BY warned_at DESC
                 LIMIT 1
             """, (member.id, ctx.guild.id))
-            
+
             row = c.fetchone()
             if not row:
                 return await ctx.send("❌ Ce membre n'a aucun warn à retirer.")
-            
-            # On le supprime
+
             c.execute("DELETE FROM warns WHERE id = %s", (row[0],))
             conn.commit()
 
@@ -413,67 +447,15 @@ async def setpresence(ctx):
     GUILD_ID = ctx.guild.id
     TABLEAU_CHANNEL_ID = ctx.channel.id
     await create_daily_presence_table()
-    await ctx.send("✅ **Nouveau tableau de présence du jour créé !** (Anciens tableaux conservés)")
+    await ctx.send("✅ **Nouveau tableau de présence du jour créé !**")
 
-@bot.command(aliases=['add'])
+@bot.command()
 @commands.has_permissions(administrator=True)
-async def adduser(ctx, *args):
-    if not args:
-        return await ctx.send("❌ Utilisation : `p!add @user` ou `p!add 123456789`")
-
-    added = []
-    with get_db() as conn:
-        with conn.cursor() as c:
-            for arg in args:
-                try:
-                    if arg.isdigit():
-                        member = ctx.guild.get_member(int(arg))
-                        user_id = int(arg)
-                        username = member.display_name if member else f"ID_{user_id}"
-                    else:
-                        member = await commands.MemberConverter().convert(ctx, arg)
-                        user_id = member.id
-                        username = member.display_name
-
-                    c.execute("""
-                        INSERT INTO authorized_users (user_id, username)
-                        VALUES (%s, %s)
-                        ON CONFLICT (user_id) DO UPDATE SET username = %s
-                    """, (user_id, username, username))
-                    added.append(username)
-                except:
-                    await ctx.send(f"⚠️ Impossible de trouver : {arg}")
-            conn.commit()
-
-    await ctx.send(f"✅ **{len(added)}** utilisateur(s) ajouté(s)/mis à jour :\n" + "\n".join(f"• {u}" for u in added))
-    await update_presence_tableau(date.today())
-
-@bot.command(aliases=['del', 'remove'])
-@commands.has_permissions(administrator=True)
-async def removeuser(ctx, *args):
-    if not args:
-        return await ctx.send("❌ Utilisation : `p!del @user` ou `p!del 123456789`")
-
-    removed = []
-    with get_db() as conn:
-        with conn.cursor() as c:
-            for arg in args:
-                try:
-                    user_id = int(arg) if arg.isdigit() else (await commands.MemberConverter().convert(ctx, arg)).id
-                    c.execute("SELECT username FROM authorized_users WHERE user_id = %s", (user_id,))
-                    row = c.fetchone()
-                    if row:
-                        c.execute("DELETE FROM authorized_users WHERE user_id = %s", (user_id,))
-                        removed.append(f"{row[0]} ({user_id})")
-                except:
-                    pass
-            conn.commit()
-
-    if removed:
-        await ctx.send(f"✅ **{len(removed)}** utilisateur(s) retiré(s) :\n" + "\n".join(f"• {u}" for u in removed))
-        await update_presence_tableau(date.today())
-    else:
-        await ctx.send("⚠️ Aucun utilisateur trouvé.")
+async def sync(ctx):
+    """Force la synchronisation de tous les membres avec le rôle Vendetta"""
+    await ctx.send("🔄 Synchronisation en cours...")
+    await sync_authorized_users(ctx.guild)
+    await ctx.send("✅ Synchronisation terminée.")
 
 @bot.command()
 async def listusers(ctx):
@@ -485,35 +467,13 @@ async def listusers(ctx):
     if not users:
         return await ctx.send("Aucun utilisateur autorisé.")
 
-    embed = discord.Embed(title="👥 Utilisateurs Autorisés", color=discord.Color.blurple())
+    embed = discord.Embed(title="👥 Utilisateurs Autorisés (Rôle Vendetta)", color=discord.Color.blurple())
     description = ""
     for username, user_id in users:
         description += f"**{username}**\n`{user_id}`\n\n"
     embed.description = description
     embed.set_footer(text=f"Total : {len(users)} utilisateurs")
     await ctx.send(embed=embed)
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def cleanusers(ctx):
-    await ctx.send("🔄 Nettoyage des membres partis...")
-    removed = []
-
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("SELECT user_id, username FROM authorized_users")
-            users = c.fetchall()
-            for user_id, username in users:
-                if not ctx.guild.get_member(user_id):
-                    c.execute("DELETE FROM authorized_users WHERE user_id = %s", (user_id,))
-                    removed.append(username)
-            conn.commit()
-
-    if removed:
-        await ctx.send(f"✅ **{len(removed)}** utilisateur(s) supprimé(s) :\n" + "\n".join(f"• {u}" for u in removed))
-        await update_presence_tableau(date.today())
-    else:
-        await ctx.send("✅ Aucun membre à nettoyer.")
 
 @bot.command()
 async def stats(ctx):
@@ -579,18 +539,18 @@ async def aide(ctx):
     embed = discord.Embed(title="📜 Commandes du Bot Diamond City", color=discord.Color.blurple())
     embed.add_field(
         name="**Présence**",
-        value="`p!setpresence`\n`p!add @user`\n`p!listusers`\n`p!stats`\n`p!history [jours]`\n`p!reset`\n`p!forceupdate`",
+        value="`p!setpresence`\n`p!sync` (forcer la synchro rôle)\n`p!listusers`\n`p!stats`\n`p!history [jours]`\n`p!reset`\n`p!forceupdate`",
         inline=False
     )
     embed.add_field(
         name="**Warns**",
-        value="`p!warn @user raison` (uniquement dans le channel warns)\n`p!warns @user`\n`p!unwarn @user`",
+        value="`p!warn @user raison`\n`p!warns @user`\n`p!unwarn @user`",
         inline=False
     )
     await ctx.send(embed=embed)
 
 # ==================== TÂCHE QUOTIDIENNE ====================
-@tasks.loop(time=time(hour=0, minute=5)) # Tous les jours à 00h05
+@tasks.loop(time=time(hour=0, minute=5))
 async def daily_presence_reset():
     print("🔄 Création automatique du tableau du jour...")
     await create_daily_presence_table()
@@ -601,8 +561,57 @@ async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
     if not daily_presence_reset.is_running():
         daily_presence_reset.start()
-    # Crée le tableau du jour s'il n'existe pas encore
+
+    # Synchronisation automatique au démarrage
+    for guild in bot.guilds:
+        await sync_authorized_users(guild)
+
     await create_daily_presence_table()
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    """Détecte l'ajout ou le retrait du rôle Vendetta"""
+    before_has = has_vendetta(before)
+    after_has = has_vendetta(after)
+
+    if before_has == after_has:
+        return
+
+    try:
+        with get_db() as conn:
+            with conn.cursor() as c:
+                if after_has and not before_has:
+                    # Rôle ajouté
+                    c.execute("""
+                        INSERT INTO authorized_users (user_id, username)
+                        VALUES (%s, %s)
+                        ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
+                    """, (after.id, after.display_name))
+                    print(f"✅ {after.display_name} a reçu le rôle Vendetta → ajouté")
+                elif before_has and not after_has:
+                    # Rôle retiré
+                    c.execute("DELETE FROM authorized_users WHERE user_id = %s", (after.id,))
+                    c.execute("DELETE FROM presences WHERE user_id = %s AND operation_date = %s", (after.id, date.today()))
+                    print(f"❌ {after.display_name} a perdu le rôle Vendetta → retiré")
+                conn.commit()
+
+        await update_presence_tableau(date.today())
+    except Exception as e:
+        print(f"Erreur on_member_update: {e}")
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    """Quand un membre quitte le serveur"""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute("DELETE FROM authorized_users WHERE user_id = %s", (member.id,))
+                c.execute("DELETE FROM presences WHERE user_id = %s AND operation_date = %s", (member.id, date.today()))
+                conn.commit()
+                print(f"🗑️ {member.display_name} a quitté le serveur → retiré")
+        await update_presence_tableau(date.today())
+    except Exception as e:
+        print(f"Erreur on_member_remove: {e}")
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
